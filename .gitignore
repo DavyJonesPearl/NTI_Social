@@ -17,3 +17,6 @@ local.properties
 # Firebase config (contains sensitive keys)
 google-services.json
 google-services.json.backup
+
+# Build outputs (all modules)
+**/build/

@@ -1,2 +1,0 @@
--keep,allowobfuscation,allowshrinking class com.afterlight.feature.party.presentation.PartyViewModel
--keep,allowobfuscation,allowshrinking class com.afterlight.feature.party.presentation.PartyViewModel
