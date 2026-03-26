@@ -1,0 +1,2 @@
+-keep,allowobfuscation,allowshrinking class com.afterlight.feature.auth.presentation.AuthViewModel
+-keep,allowobfuscation,allowshrinking class com.afterlight.feature.auth.presentation.AuthViewModel

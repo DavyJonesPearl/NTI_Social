@@ -1,0 +1,1 @@
+-keep,allowobfuscation,allowshrinking class com.afterlight.feature.gallery.presentation.GalleryViewModel

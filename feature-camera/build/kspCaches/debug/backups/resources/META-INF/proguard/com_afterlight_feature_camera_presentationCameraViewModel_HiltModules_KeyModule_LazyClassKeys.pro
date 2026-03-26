@@ -1,0 +1,2 @@
+-keep,allowobfuscation,allowshrinking class com.afterlight.feature.camera.presentation.CameraViewModel
+-keep,allowobfuscation,allowshrinking class com.afterlight.feature.camera.presentation.CameraViewModel
