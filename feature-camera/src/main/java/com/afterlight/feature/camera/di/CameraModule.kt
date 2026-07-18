@@ -3,7 +3,7 @@ package com.afterlight.feature.camera.di
 import android.content.Context
 import com.afterlight.core.security.SecurityManager
 import com.afterlight.data.local.dao.MediaDao
-import com.afterlight.data.remote.api.MediaApi
+import com.afterlight.data.remote.firebase.FirebaseMediaService
 import com.afterlight.feature.camera.controller.CameraController
 import com.afterlight.feature.camera.domain.CameraRepository
 import dagger.Module
@@ -27,9 +27,9 @@ object CameraModule {
         @ApplicationContext context: Context,
         securityManager: SecurityManager,
         mediaDao: MediaDao,
-        mediaApi: MediaApi
+        firebaseMediaService: FirebaseMediaService
     ): CameraRepository {
-        return CameraRepository(context, securityManager, mediaDao, mediaApi)
+        return CameraRepository(context, securityManager, mediaDao, firebaseMediaService)
     }
     
     @Provides

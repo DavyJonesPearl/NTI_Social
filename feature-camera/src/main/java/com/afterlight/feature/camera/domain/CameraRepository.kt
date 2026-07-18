@@ -5,8 +5,11 @@ import androidx.camera.core.ImageProxy
 import com.afterlight.core.security.SecurityManager
 import com.afterlight.data.local.dao.MediaDao
 import com.afterlight.data.local.model.MediaEntity
-import com.afterlight.data.remote.api.MediaApi
+import com.afterlight.data.remote.firebase.FirebaseMediaService
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
@@ -26,7 +29,7 @@ class CameraRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val securityManager: SecurityManager,
     private val mediaDao: MediaDao,
-    private val mediaApi: MediaApi
+    private val firebaseMediaService: FirebaseMediaService
 ) {
     
     /**
@@ -66,7 +69,7 @@ class CameraRepository @Inject constructor(
             mediaDao.insert(mediaEntity)
             
             // Upload encrypted file to backend (async, don't block capture)
-            uploadMediaAsync(partyId, encryptedFile)
+            uploadMediaAsync(partyId, mediaId, encryptedFile)
             
             Result.success(mediaEntity)
         } catch (e: Exception) {
@@ -90,14 +93,14 @@ class CameraRepository @Inject constructor(
     /**
      * Uploads encrypted media file to backend (fire-and-forget).
      */
-    private suspend fun uploadMediaAsync(partyId: String, encryptedFile: File) {
-        try {
-            val requestFile = encryptedFile.asRequestBody("application/octet-stream".toMediaTypeOrNull())
-            val body = MultipartBody.Part.createFormData("file", encryptedFile.name, requestFile)
-            mediaApi.uploadMedia(partyId, body)
-        } catch (e: Exception) {
-            // Log but don't fail capture
-            android.util.Log.e("CameraRepository", "Upload failed: ${e.message}")
+    private fun uploadMediaAsync(partyId: String, mediaId: String, encryptedFile: File) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                firebaseMediaService.uploadMedia(partyId, mediaId, encryptedFile)
+            } catch (e: Exception) {
+                // Log but don't fail capture
+                android.util.Log.e("CameraRepository", "Upload failed: ${e.message}")
+            }
         }
     }
 }
