@@ -43,6 +43,9 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
     
+    // Encrypted passphrase storage
+    implementation(libs.androidx.security.crypto)
+
     // SQLCipher (Room encryption)
     implementation(libs.sqlcipher.android)
     implementation(libs.androidx.sqlite)

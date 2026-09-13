@@ -4,9 +4,11 @@ import android.app.Application
 import android.os.StrictMode
 import android.os.SystemClock
 import android.util.Log
+import androidx.hilt.work.HiltWorkerFactory
+import androidx.work.Configuration
 import com.afterlight.core.security.PlaintextLeakDetector
 import dagger.hilt.android.HiltAndroidApp
-import net.zetetic.database.sqlcipher.SQLiteDatabase
+import javax.inject.Inject
 
 /**
  * Stage 12A: Production Hardening - StrictMode Enforcement
@@ -38,7 +40,15 @@ import net.zetetic.database.sqlcipher.SQLiteDatabase
  * • Profile cold start performance
  */
 @HiltAndroidApp
-class AfterlightApplication : Application() {
+class AfterlightApplication : Application(), Configuration.Provider {
+
+    @Inject
+    lateinit var workerFactory: HiltWorkerFactory
+
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder()
+            .setWorkerFactory(workerFactory)
+            .build()
     
     companion object {
         private const val TAG = "AfterlightApp"

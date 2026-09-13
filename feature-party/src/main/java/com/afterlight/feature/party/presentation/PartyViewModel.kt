@@ -6,6 +6,7 @@ import com.afterlight.data.local.model.PartyEntity
 import com.afterlight.feature.party.domain.PartyRepository
 import com.afterlight.feature.party.worker.PartyExpirationScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,9 +29,23 @@ class PartyViewModel @Inject constructor(
     
     private val _uiState = MutableStateFlow<PartyUiState>(PartyUiState.Idle)
     val uiState: StateFlow<PartyUiState> = _uiState.asStateFlow()
+
+    private val _selectedParty = MutableStateFlow<PartyEntity?>(null)
+    val selectedParty: StateFlow<PartyEntity?> = _selectedParty.asStateFlow()
+
+    private var selectedPartyJob: Job? = null
     
     init {
         loadParties()
+    }
+
+    fun loadParty(partyId: String) {
+        selectedPartyJob?.cancel()
+        selectedPartyJob = viewModelScope.launch {
+            partyRepository.getPartyById(partyId).collect { party ->
+                _selectedParty.value = party
+            }
+        }
     }
     
     /**

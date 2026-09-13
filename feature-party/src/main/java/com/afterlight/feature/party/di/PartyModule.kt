@@ -1,15 +1,23 @@
 package com.afterlight.feature.party.di
 
+import com.afterlight.feature.party.data.FirebasePartyRepository
+import com.afterlight.feature.party.domain.PartyRepository
+import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
 
 /**
  * Hilt module for feature-party dependency injection.
- * Stage 13: PartyRepository and PartyExpirationScheduler are @Singleton constructor-injected.
  */
 @Module
 @InstallIn(SingletonComponent::class)
-object PartyModule {
-    // No provides needed - PartyRepository and PartyExpirationScheduler use @Inject constructor
+abstract class PartyModule {
+    
+    @Binds
+    @Singleton
+    abstract fun bindPartyRepository(
+        firebasePartyRepository: FirebasePartyRepository
+    ): PartyRepository
 }

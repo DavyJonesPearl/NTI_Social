@@ -20,6 +20,9 @@ interface PartyDao {
     
     @Query("SELECT * FROM parties WHERE isDeleted = 0 AND expiresAt > :currentTime ORDER BY createdAt DESC")
     fun getActiveParties(currentTime: Instant): Flow<List<PartyEntity>>
+
+    @Query("SELECT * FROM parties WHERE isDeleted = 0 AND expiresAt > :currentTime")
+    suspend fun getActivePartiesOnce(currentTime: Instant): List<PartyEntity>
     
     @Query("SELECT * FROM parties WHERE hostUserId = :userId AND isDeleted = 0 ORDER BY createdAt DESC")
     fun getPartiesByHost(userId: String): Flow<List<PartyEntity>>

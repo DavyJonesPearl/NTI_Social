@@ -1,6 +1,5 @@
 package com.afterlight.feature.camera.presentation
 
-import androidx.camera.core.ImageProxy
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.afterlight.data.local.model.MediaEntity
@@ -9,11 +8,11 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import java.io.File
 import javax.inject.Inject
 
 /**
  * Camera ViewModel with capture state management.
- * Stage 13: Handles photo capture, encryption, and permission state.
  */
 @HiltViewModel
 class CameraViewModel @Inject constructor(
@@ -26,14 +25,10 @@ class CameraViewModel @Inject constructor(
     private val _permissionGranted = MutableStateFlow(false)
     val permissionGranted: StateFlow<Boolean> = _permissionGranted
     
-    /**
-     * Captures photo from ImageProxy and processes it.
-     */
-    fun capturePhoto(partyId: String, imageProxy: ImageProxy) {
+    fun capturePhoto(partyId: String, jpegFile: File) {
         viewModelScope.launch {
             _captureState.value = CaptureState.Capturing
-            
-            repository.capturePhoto(partyId, imageProxy).fold(
+            repository.capturePhoto(partyId, jpegFile).fold(
                 onSuccess = { mediaEntity ->
                     _captureState.value = CaptureState.Success(mediaEntity)
                 },
@@ -41,30 +36,18 @@ class CameraViewModel @Inject constructor(
                     _captureState.value = CaptureState.Error(error.message ?: "Capture failed")
                 }
             )
-            
-            // Close ImageProxy after processing
-            imageProxy.close()
         }
     }
     
-    /**
-     * Updates camera permission state.
-     */
     fun updatePermission(granted: Boolean) {
         _permissionGranted.value = granted
     }
     
-    /**
-     * Resets capture state to idle.
-     */
     fun resetCaptureState() {
         _captureState.value = CaptureState.Idle
     }
 }
 
-/**
- * Camera capture state sealed class.
- */
 sealed class CaptureState {
     data object Idle : CaptureState()
     data object Capturing : CaptureState()

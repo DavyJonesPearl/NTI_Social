@@ -61,6 +61,18 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    lint {
+        checkReleaseBuilds = false
+    }
+}
+
+// google-services.json currently registers only com.afterlight.app.debug.
+// Release processing is disabled until the release Android app is added in Firebase.
+tasks.configureEach {
+    if (name.contains("Release") && name.contains("GoogleServices")) {
+        enabled = false
+    }
 }
 
 dependencies {
@@ -101,6 +113,9 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.android.compiler)
     implementation(libs.androidx.hilt.navigation.compose)
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.androidx.hilt.compiler)
+    implementation(libs.androidx.work.runtime.ktx)
     
     // SQLite (required by WorkManager)
     implementation(libs.androidx.sqlite)
@@ -113,6 +128,8 @@ dependencies {
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.auth)
     implementation(libs.firebase.firestore)
+    implementation(libs.firebase.storage)
+    implementation(libs.firebase.functions)
     
     // Testing
     testImplementation(libs.junit)

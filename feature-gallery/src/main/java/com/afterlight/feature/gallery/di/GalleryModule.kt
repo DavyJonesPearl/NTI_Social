@@ -2,6 +2,7 @@ package com.afterlight.feature.gallery.di
 
 import com.afterlight.core.security.SecurityManager
 import com.afterlight.data.local.dao.MediaDao
+import com.afterlight.data.remote.firebase.FirebaseMediaService
 import com.afterlight.feature.gallery.domain.GalleryRepository
 import dagger.Module
 import dagger.Provides
@@ -22,9 +23,10 @@ object GalleryModule {
     @Singleton
     fun provideGalleryRepository(
         securityManager: SecurityManager,
-        mediaDao: MediaDao
+        mediaDao: MediaDao,
+        firebaseMediaService: FirebaseMediaService
     ): GalleryRepository {
-        return GalleryRepository(securityManager, mediaDao)
+        return GalleryRepository(securityManager, mediaDao, firebaseMediaService)
     }
 }
 

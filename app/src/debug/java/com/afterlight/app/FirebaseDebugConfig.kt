@@ -45,9 +45,17 @@ object FirebaseDebugConfig {
             // Configure Firestore Emulator
             FirebaseFirestore.getInstance().useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
             
+            // Configure Functions Emulator
+            com.google.firebase.functions.FirebaseFunctions.getInstance().useEmulator(EMULATOR_HOST, 5001)
+            
+            // Configure Storage Emulator
+            com.google.firebase.storage.FirebaseStorage.getInstance().useEmulator(EMULATOR_HOST, 9199)
+            
             println("🔧 Firebase Emulators configured:")
             println("   Auth: http://$EMULATOR_HOST:$AUTH_PORT")
             println("   Firestore: http://$EMULATOR_HOST:$FIRESTORE_PORT")
+            println("   Functions: http://$EMULATOR_HOST:5001")
+            println("   Storage: http://$EMULATOR_HOST:9199")
             println("   UI: http://localhost:4000")
         } catch (e: Exception) {
             println("⚠️ Failed to configure Firebase Emulators: ${e.message}")

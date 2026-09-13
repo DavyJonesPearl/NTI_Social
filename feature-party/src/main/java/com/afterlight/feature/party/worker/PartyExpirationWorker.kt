@@ -8,7 +8,7 @@ import androidx.work.WorkerParameters
 import com.afterlight.core.security.SecurityManager
 import com.afterlight.data.local.dao.MediaDao
 import com.afterlight.data.local.dao.PartyDao
-import com.afterlight.data.remote.api.PartyApi
+import com.afterlight.feature.party.domain.PartyRepository
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.first
@@ -24,7 +24,7 @@ class PartyExpirationWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val partyDao: PartyDao,
     private val mediaDao: MediaDao,
-    private val partyApi: PartyApi,
+    private val partyRepository: PartyRepository,
     private val securityManager: SecurityManager
 ) : CoroutineWorker(context, params) {
     
@@ -71,7 +71,7 @@ class PartyExpirationWorker @AssistedInject constructor(
             
             // 5. Sync deletion to backend (best effort)
             try {
-                partyApi.deleteParty(partyId)
+                partyRepository.deleteParty(partyId)
                 Log.d(TAG, "Synced deletion to backend: $partyId")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to sync deletion to backend: $partyId", e)

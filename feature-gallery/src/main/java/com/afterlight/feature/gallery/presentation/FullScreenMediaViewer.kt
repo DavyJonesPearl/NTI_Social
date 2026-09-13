@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.afterlight.core.security.ScreenProtectionManager
 import com.afterlight.data.local.model.MediaEntity
 import com.afterlight.feature.gallery.di.GalleryEntryPoint
 import com.afterlight.feature.gallery.domain.GalleryRepository
@@ -40,6 +41,7 @@ fun FullScreenMediaViewer(
     partyId: String,
     onDismiss: () -> Unit
 ) {
+    ScreenProtectionManager.ProtectScreen()
     val pagerState = rememberPagerState(
         initialPage = initialIndex,
         pageCount = { mediaList.size }
@@ -106,16 +108,15 @@ fun FullScreenMediaPage(
         }
     }
     
-    // Decrypt media on-demand
-    val decryptionState by produceState<DecryptionState>(
-        initialValue = DecryptionState.Loading,
-        mediaEntity.id
-    ) {
-        value = withContext(Dispatchers.IO) {
+    var decryptionState by remember(mediaEntity.id) {
+        mutableStateOf<DecryptionState>(DecryptionState.Loading)
+    }
+    LaunchedEffect(mediaEntity.id) {
+        decryptionState = withContext(Dispatchers.IO) {
             try {
                 val bytes = repository.decryptMedia(mediaEntity.id, partyId).getOrThrow()
                 val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                bytes.fill(0) // Zero out after decode
+                bytes.fill(0)
                 DecryptionState.Success(bitmap)
             } catch (e: Exception) {
                 DecryptionState.Error(e.message ?: "Decryption failed")

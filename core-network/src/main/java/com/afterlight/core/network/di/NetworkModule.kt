@@ -1,11 +1,14 @@
 package com.afterlight.core.network.di
 
+import android.content.Context
+import android.content.pm.ApplicationInfo
 import com.afterlight.core.network.NetworkClientFactory
 import com.afterlight.core.network.RetrofitFactory
 import com.afterlight.core.network.TokenProvider
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
@@ -28,12 +31,14 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideOkHttpClient(
+        @ApplicationContext context: Context,
         networkClientFactory: NetworkClientFactory,
         tokenProvider: TokenProvider?
     ): OkHttpClient {
+        val isDebuggable = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         return networkClientFactory.createOkHttpClient(
             tokenProvider = tokenProvider,
-            enableLogging = true // TODO: Use BuildConfig.DEBUG
+            enableLogging = isDebuggable
         )
     }
     

@@ -3,7 +3,9 @@ package com.afterlight.feature.gallery.domain
 import com.afterlight.core.security.SecurityManager
 import com.afterlight.data.local.dao.MediaDao
 import com.afterlight.data.local.model.MediaEntity
+import com.afterlight.data.remote.firebase.FirebaseMediaService
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -15,7 +17,8 @@ import javax.inject.Singleton
 @Singleton
 class GalleryRepository @Inject constructor(
     private val securityManager: SecurityManager,
-    private val mediaDao: MediaDao
+    private val mediaDao: MediaDao,
+    private val firebaseMediaService: FirebaseMediaService
 ) {
     
     /**
@@ -38,18 +41,25 @@ class GalleryRepository @Inject constructor(
     suspend fun decryptMedia(mediaId: String, partyId: String): Result<ByteArray> {
         return try {
             // Get media entity from Room
-            var mediaEntity: MediaEntity? = null
-            mediaDao.getMediaById(mediaId).collect { entity ->
-                mediaEntity = entity
-            }
+            val mediaEntity = mediaDao.getMediaById(mediaId).first()
             
             if (mediaEntity == null) {
                 return Result.failure(Exception("Media not found"))
             }
             
-            val encryptedFile = File(mediaEntity!!.encryptedFilePath)
+            val encryptedFile = File(mediaEntity.encryptedFilePath)
             if (!encryptedFile.exists()) {
-                return Result.failure(Exception("Encrypted file not found"))
+                // Download file from Firebase Storage
+                encryptedFile.parentFile?.mkdirs()
+                val downloadResult = firebaseMediaService.downloadMedia(partyId, mediaId, encryptedFile)
+                if (downloadResult.isFailure) {
+                    return Result.failure(
+                        Exception(
+                            "Failed to download encrypted file from cloud",
+                            downloadResult.exceptionOrNull()
+                        )
+                    )
+                }
             }
             
             // Decrypt to temp file (SecurityManager doesn't support ByteArray output directly)

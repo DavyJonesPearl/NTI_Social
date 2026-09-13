@@ -26,6 +26,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.afterlight.core.security.ScreenProtectionManager
+import java.io.File
 import java.util.concurrent.Executors
 
 /**
@@ -39,6 +41,7 @@ fun CameraScreen(
     onNavigateToGallery: () -> Unit,
     viewModel: CameraViewModel = hiltViewModel()
 ) {
+    ScreenProtectionManager.ProtectScreen()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -112,15 +115,18 @@ fun CameraScreen(
                 FloatingActionButton(
                     onClick = {
                         val executor = Executors.newSingleThreadExecutor()
+                        val photoFile = File(context.cacheDir, "capture_${System.currentTimeMillis()}.jpg")
+                        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
                         imageCapture.takePicture(
+                            outputOptions,
                             executor,
-                            object : ImageCapture.OnImageCapturedCallback() {
-                                override fun onCaptureSuccess(imageProxy: androidx.camera.core.ImageProxy) {
-                                    viewModel.capturePhoto(partyId, imageProxy)
+                            object : ImageCapture.OnImageSavedCallback {
+                                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                                    viewModel.capturePhoto(partyId, photoFile)
                                 }
                                 
                                 override fun onError(exception: ImageCaptureException) {
-                                    // Handle error
+                                    photoFile.delete()
                                     android.util.Log.e("CameraScreen", "Capture failed", exception)
                                 }
                             }

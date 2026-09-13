@@ -50,6 +50,11 @@ dependencies {
     implementation(project(":data-local"))
     implementation(project(":data-remote"))
     
+    // Firebase
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.auth)
+    implementation(libs.firebase.firestore)
+    
     // AndroidX Core
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

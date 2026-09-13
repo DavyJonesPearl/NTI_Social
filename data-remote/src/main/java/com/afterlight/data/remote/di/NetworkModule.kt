@@ -36,6 +36,22 @@ object NetworkModule {
     fun provideFirebaseFirestore(): FirebaseFirestore = FirebaseFirestore.getInstance()
     
     /**
+     * Provides Firebase Functions instance
+     */
+    @Provides
+    @Singleton
+    fun provideFirebaseFunctions(): com.google.firebase.functions.FirebaseFunctions = 
+        com.google.firebase.functions.FirebaseFunctions.getInstance()
+        
+    /**
+     * Provides Firebase Storage instance
+     */
+    @Provides
+    @Singleton
+    fun provideFirebaseStorage(): com.google.firebase.storage.FirebaseStorage = 
+        com.google.firebase.storage.FirebaseStorage.getInstance()
+    
+    /**
      * Provides singleton AuthApi instance.
      */
     @Provides
