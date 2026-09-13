@@ -19,6 +19,9 @@ interface MediaDao {
     
     @Query("SELECT * FROM media WHERE partyId = :partyId ORDER BY createdAt DESC")
     fun getMediaForParty(partyId: String): Flow<List<MediaEntity>>
+
+    @Query("SELECT * FROM media WHERE partyId = :partyId")
+    suspend fun getMediaForPartyOnce(partyId: String): List<MediaEntity>
     
     @Query("SELECT * FROM media WHERE flagged = 1 ORDER BY createdAt DESC")
     fun getFlaggedMedia(): Flow<List<MediaEntity>>

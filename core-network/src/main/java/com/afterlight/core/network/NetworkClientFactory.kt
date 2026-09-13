@@ -80,7 +80,7 @@ class NetworkClientFactory @Inject constructor() {
         return HttpLoggingInterceptor { message ->
             Log.d(TAG, message)
         }.apply {
-            level = HttpLoggingInterceptor.Level.BODY
+            level = HttpLoggingInterceptor.Level.BASIC
         }
     }
 }

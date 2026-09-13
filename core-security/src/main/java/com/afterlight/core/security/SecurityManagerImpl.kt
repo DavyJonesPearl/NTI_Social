@@ -1,10 +1,7 @@
 package com.afterlight.core.security
 
-import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Log
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -13,19 +10,22 @@ import java.io.FileOutputStream
 import java.security.KeyStore
 import java.security.SecureRandom
 import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Production implementation of SecurityManager using Android Keystore.
- * Stage 13: AES-256-GCM with 128-bit GCM tag, 12-byte IV.
+ * AES-256-GCM file encryption.
+ *
+ * New captures use the shared party media key so every member can decrypt.
+ * Legacy local files encrypted with a per-device Keystore key remain decryptable
+ * on the capturing device only.
  */
 @Singleton
 class SecurityManagerImpl @Inject constructor(
-    @ApplicationContext private val context: Context
+    private val partyKeyStore: PartyKeyStore
 ) : SecurityManager {
     
     private companion object {
@@ -45,41 +45,9 @@ class SecurityManagerImpl @Inject constructor(
     override suspend fun encryptFile(inputFile: File, outputFile: File, partyId: String) {
         withContext(Dispatchers.IO) {
             try {
-                val secretKey = getOrCreateKeyForParty(partyId)
-                val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
-                
-                // Generate random IV (12 bytes for GCM)
-                val iv = ByteArray(IV_LENGTH_BYTES)
-                SecureRandom().nextBytes(iv)
-                
-                val gcmSpec = GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv)
-                cipher.init(Cipher.ENCRYPT_MODE, secretKey, gcmSpec)
-                
-                FileInputStream(inputFile).use { input ->
-                    FileOutputStream(outputFile).use { output ->
-                        // Write IV first (12 bytes)
-                        output.write(iv)
-                        
-                        // Encrypt file contents
-                        val buffer = ByteArray(BUFFER_SIZE)
-                        var bytesRead: Int
-                        while (input.read(buffer).also { bytesRead = it } != -1) {
-                            val encryptedChunk = cipher.update(buffer, 0, bytesRead)
-                            if (encryptedChunk != null) {
-                                output.write(encryptedChunk)
-                            }
-                        }
-                        
-                        // Write final block (includes GCM tag)
-                        val finalBlock = cipher.doFinal()
-                        output.write(finalBlock)
-                        
-                        // Wipe buffer
-                        buffer.fill(0)
-                    }
-                }
-                
-                Log.d(TAG, "Encrypted file: ${inputFile.name} -> ${outputFile.name} (party: $partyId)")
+                val secretKey = getSharedKeyOrThrow(partyId)
+                encryptWithKey(inputFile, outputFile, secretKey)
+                Log.d(TAG, "Encrypted file: ${inputFile.name} -> ${outputFile.name}")
             } catch (e: Exception) {
                 Log.e(TAG, "Encryption failed for party $partyId", e)
                 throw SecurityException("Encryption failed: ${e.message}", e)
@@ -89,51 +57,27 @@ class SecurityManagerImpl @Inject constructor(
     
     override suspend fun decryptFile(inputFile: File, outputFile: File, partyId: String) {
         withContext(Dispatchers.IO) {
-            try {
-                val secretKey = getOrCreateKeyForParty(partyId)
-                val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
-                
-                FileInputStream(inputFile).use { input ->
-                    // Read IV from first 12 bytes
-                    val iv = ByteArray(IV_LENGTH_BYTES)
-                    val ivBytesRead = input.read(iv)
-                    if (ivBytesRead != IV_LENGTH_BYTES) {
-                        throw SecurityException("Invalid encrypted file: IV missing or truncated")
-                    }
-                    
-                    val gcmSpec = GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv)
-                    cipher.init(Cipher.DECRYPT_MODE, secretKey, gcmSpec)
-                    
-                    FileOutputStream(outputFile).use { output ->
-                        val buffer = ByteArray(BUFFER_SIZE)
-                        var bytesRead: Int
-                        while (input.read(buffer).also { bytesRead = it } != -1) {
-                            val decryptedChunk = cipher.update(buffer, 0, bytesRead)
-                            if (decryptedChunk != null) {
-                                output.write(decryptedChunk)
-                            }
-                        }
-                        
-                        // Finalize decryption (verifies GCM tag)
-                        val finalBlock = cipher.doFinal()
-                        if (finalBlock.isNotEmpty()) {
-                            output.write(finalBlock)
-                        }
-                        
-                        // Wipe buffer
-                        buffer.fill(0)
-                    }
-                }
-                
-                Log.d(TAG, "Decrypted file: ${inputFile.name} -> ${outputFile.name} (party: $partyId)")
-            } catch (e: Exception) {
-                Log.e(TAG, "Decryption failed for party $partyId", e)
-                // Clean up partial output
-                if (outputFile.exists()) {
-                    outputFile.delete()
-                }
-                throw SecurityException("Decryption failed: ${e.message}", e)
+            val keys = decryptionKeys(partyId)
+            if (keys.isEmpty()) {
+                throw SecurityException("No decryption key available for party $partyId")
             }
+
+            var lastError: Exception? = null
+            for (secretKey in keys) {
+                try {
+                    decryptWithKey(inputFile, outputFile, secretKey)
+                    Log.d(TAG, "Decrypted file: ${inputFile.name} -> ${outputFile.name}")
+                    return@withContext
+                } catch (e: Exception) {
+                    lastError = e
+                    if (outputFile.exists()) {
+                        outputFile.delete()
+                    }
+                }
+            }
+
+            Log.e(TAG, "Decryption failed for party $partyId", lastError)
+            throw SecurityException("Decryption failed: ${lastError?.message}", lastError)
         }
     }
     
@@ -156,56 +100,92 @@ class SecurityManagerImpl @Inject constructor(
     override suspend fun rotatePartyKey(partyId: String) {
         withContext(Dispatchers.IO) {
             try {
+                partyKeyStore.deleteKey(partyId)
                 val keyAlias = "$KEY_ALIAS_PREFIX$partyId"
-                
-                // Delete existing key
                 if (keyStore.containsAlias(keyAlias)) {
                     keyStore.deleteEntry(keyAlias)
-                    Log.d(TAG, "Deleted existing key for party: $partyId")
                 }
-                
-                // Generate new key
-                getOrCreateKeyForParty(partyId)
-                Log.d(TAG, "Rotated key for party: $partyId")
+                Log.d(TAG, "Deleted encryption keys for party: $partyId")
             } catch (e: Exception) {
                 Log.e(TAG, "Key rotation failed for party $partyId", e)
                 throw SecurityException("Key rotation failed: ${e.message}", e)
             }
         }
     }
-    
-    /**
-     * Retrieves existing key or generates new AES-256 key in Android Keystore.
-     */
-    private fun getOrCreateKeyForParty(partyId: String): SecretKey {
-        val keyAlias = "$KEY_ALIAS_PREFIX$partyId"
-        
-        // Check if key exists
-        if (keyStore.containsAlias(keyAlias)) {
-            val entry = keyStore.getEntry(keyAlias, null) as KeyStore.SecretKeyEntry
-            return entry.secretKey
+
+    private fun getSharedKeyOrThrow(partyId: String): SecretKey {
+        val shared = partyKeyStore.getKey(partyId)
+            ?: throw SecurityException("Shared party media key is not available yet")
+        return SecretKeySpec(shared, KeyProperties.KEY_ALGORITHM_AES)
+    }
+
+    private fun decryptionKeys(partyId: String): List<SecretKey> {
+        val keys = mutableListOf<SecretKey>()
+        partyKeyStore.getKey(partyId)?.let {
+            keys.add(SecretKeySpec(it, KeyProperties.KEY_ALGORITHM_AES))
         }
-        
-        // Generate new key
-        val keyGenerator = KeyGenerator.getInstance(
-            KeyProperties.KEY_ALGORITHM_AES,
-            KEYSTORE_PROVIDER
-        )
-        
-        val keySpec = KeyGenParameterSpec.Builder(
-            keyAlias,
-            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-        )
-            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-            .setKeySize(256)
-            .setUserAuthenticationRequired(false)
-            .build()
-        
-        keyGenerator.init(keySpec)
-        val secretKey = keyGenerator.generateKey()
-        
-        Log.d(TAG, "Generated new AES-256 key for party: $partyId")
-        return secretKey
+        getLegacyKeystoreKey(partyId)?.let { keys.add(it) }
+        return keys
+    }
+
+    private fun getLegacyKeystoreKey(partyId: String): SecretKey? {
+        val keyAlias = "$KEY_ALIAS_PREFIX$partyId"
+        if (!keyStore.containsAlias(keyAlias)) {
+            return null
+        }
+        return runCatching {
+            val entry = keyStore.getEntry(keyAlias, null) as KeyStore.SecretKeyEntry
+            entry.secretKey
+        }.getOrNull()
+    }
+
+    private fun encryptWithKey(inputFile: File, outputFile: File, secretKey: SecretKey) {
+        val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
+        val iv = ByteArray(IV_LENGTH_BYTES)
+        SecureRandom().nextBytes(iv)
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey, GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
+
+        FileInputStream(inputFile).use { input ->
+            FileOutputStream(outputFile).use { output ->
+                output.write(iv)
+                val buffer = ByteArray(BUFFER_SIZE)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    val encryptedChunk = cipher.update(buffer, 0, bytesRead)
+                    if (encryptedChunk != null) {
+                        output.write(encryptedChunk)
+                    }
+                }
+                output.write(cipher.doFinal())
+                buffer.fill(0)
+            }
+        }
+    }
+
+    private fun decryptWithKey(inputFile: File, outputFile: File, secretKey: SecretKey) {
+        val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
+        FileInputStream(inputFile).use { input ->
+            val iv = ByteArray(IV_LENGTH_BYTES)
+            val ivBytesRead = input.read(iv)
+            if (ivBytesRead != IV_LENGTH_BYTES) {
+                throw SecurityException("Invalid encrypted file: IV missing or truncated")
+            }
+            cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
+            FileOutputStream(outputFile).use { output ->
+                val buffer = ByteArray(BUFFER_SIZE)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    val decryptedChunk = cipher.update(buffer, 0, bytesRead)
+                    if (decryptedChunk != null) {
+                        output.write(decryptedChunk)
+                    }
+                }
+                val finalBlock = cipher.doFinal()
+                if (finalBlock.isNotEmpty()) {
+                    output.write(finalBlock)
+                }
+                buffer.fill(0)
+            }
+        }
     }
 }

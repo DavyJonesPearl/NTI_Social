@@ -2,37 +2,39 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Helper function to check if user is authenticated
     function isAuthenticated() {
       return request.auth != null;
     }
     
-    // Helper function to check if user is a member of the party
     function isPartyMember(partyId) {
       return isAuthenticated() && 
         request.auth.uid in get(/databases/$(database)/documents/parties/$(partyId)).data.members;
     }
+
+    function isHost() {
+      return isAuthenticated() && request.auth.uid == resource.data.hostUserId;
+    }
+
+    function mediaKeyUnchanged() {
+      return !('mediaKey' in resource.data) ||
+        request.resource.data.mediaKey == resource.data.mediaKey;
+    }
     
-    // Users collection - user can read/write own data
     match /users/{userId} {
       allow read, write: if isAuthenticated() && request.auth.uid == userId;
     }
     
-    // Parties collection
     match /parties/{partyId} {
-      // members can read
       allow read: if isAuthenticated() && request.auth.uid in resource.data.members;
-      // any authenticated user can create a party
-      allow create: if isAuthenticated();
-      // host can update (and delete)
-      allow update, delete: if isAuthenticated() && request.auth.uid == resource.data.hostUserId;
+      allow create: if isAuthenticated() &&
+        request.resource.data.hostUserId == request.auth.uid;
+      allow update: if isHost() && mediaKeyUnchanged();
+      allow delete: if isHost();
       
-      // /parties/{partyId}/members/{userId} – members only
       match /members/{userId} {
         allow read, write: if isPartyMember(partyId);
       }
       
-      // /parties/{partyId}/media/{mediaId} – members only
       match /media/{mediaId} {
         allow read, write: if isPartyMember(partyId);
       }

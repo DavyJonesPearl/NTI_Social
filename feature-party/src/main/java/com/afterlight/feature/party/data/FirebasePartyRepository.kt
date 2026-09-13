@@ -3,12 +3,18 @@ package com.afterlight.feature.party.data
 import android.content.Context
 import android.util.Log
 import com.afterlight.core.network.ConnectivityObserver
+import com.afterlight.core.security.PartyKeyCodec
+import com.afterlight.core.security.PartyKeyStore
+import com.afterlight.data.local.MediaFilePaths
+import com.afterlight.data.local.dao.MediaDao
 import com.afterlight.data.local.dao.PartyDao
+import com.afterlight.data.local.model.MediaEntity
 import com.afterlight.data.local.model.PartyEntity
 import com.afterlight.data.remote.firebase.FirebasePartyService
 import com.afterlight.feature.party.domain.PartyRepository
 import com.afterlight.feature.party.worker.PartyExpirationScheduler
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -25,13 +31,15 @@ import javax.inject.Singleton
 
 /**
  * Firebase-backed implementation of PartyRepository.
- * Handles online real-time syncing of active parties and syncing offline writes to local Room cache.
+ * Syncs parties and party media metadata into Room, and imports the shared media key.
  */
 @Singleton
 class FirebasePartyRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val partyService: FirebasePartyService,
     private val partyDao: PartyDao,
+    private val mediaDao: MediaDao,
+    private val partyKeyStore: PartyKeyStore,
     private val expirationScheduler: PartyExpirationScheduler,
     private val firestore: FirebaseFirestore,
     private val auth: FirebaseAuth,
@@ -43,11 +51,11 @@ class FirebasePartyRepository @Inject constructor(
     }
 
     private var partyListener: ListenerRegistration? = null
+    private val mediaListeners = mutableMapOf<String, ListenerRegistration>()
     private var isSyncing = false
     private val repositoryScope = CoroutineScope(Dispatchers.IO)
 
     init {
-        // Automatically start/stop syncing when auth state changes
         auth.addAuthStateListener { firebaseAuth ->
             val userId = firebaseAuth.currentUser?.uid
             if (userId != null) {
@@ -57,7 +65,6 @@ class FirebasePartyRepository @Inject constructor(
             }
         }
 
-        // Handle offline -> online transitions using ConnectivityObserver
         repositoryScope.launch {
             connectivityObserver.isConnected.collectLatest { connected ->
                 try {
@@ -92,6 +99,8 @@ class FirebasePartyRepository @Inject constructor(
                     repositoryScope.launch {
                         try {
                             val activeParties = mutableListOf<PartyEntity>()
+                            val activePartyIds = mutableSetOf<String>()
+                            val snapshotIds = snapshot.documents.map { it.id }.toSet()
                             val now = Clock.System.now()
 
                             for (doc in snapshot.documents) {
@@ -101,6 +110,7 @@ class FirebasePartyRepository @Inject constructor(
                                 val createdAtTimestamp = doc.getTimestamp("createdAt")
                                 val expiresAtTimestamp = doc.getTimestamp("expiresAt")
                                 val isActive = doc.getBoolean("isActive") ?: true
+                                val mediaKey = doc.getString("mediaKey")
 
                                 val createdAt = createdAtTimestamp?.let { 
                                     Instant.fromEpochMilliseconds(it.toDate().time) 
@@ -120,19 +130,26 @@ class FirebasePartyRepository @Inject constructor(
                                         isDeleted = false
                                     )
                                     activeParties.add(party)
-                                    
-                                    // Make sure expiration is scheduled locally
+                                    activePartyIds.add(id)
                                     expirationScheduler.scheduleExpiration(id, expiresAt)
+                                    ensureSharedMediaKey(id, hostUserId, mediaKey)
                                 } else {
-                                    // Mark inactive/expired locally
                                     partyDao.softDelete(id)
                                     expirationScheduler.cancelExpiration(id)
                                 }
                             }
 
+                            val localActive = partyDao.getActivePartiesOnce(now)
+                            localActive.filter { it.id !in snapshotIds }.forEach { stale ->
+                                partyDao.softDelete(stale.id)
+                                expirationScheduler.cancelExpiration(stale.id)
+                            }
+
                             if (activeParties.isNotEmpty()) {
                                 partyDao.insertAll(activeParties)
                             }
+
+                            reconcileMediaListeners(activePartyIds)
                         } catch (e: Exception) {
                             Log.e(TAG, "Error processing snapshot", e)
                         }
@@ -145,7 +162,128 @@ class FirebasePartyRepository @Inject constructor(
         Log.d(TAG, "Stopping real-time Firestore sync")
         partyListener?.remove()
         partyListener = null
+        mediaListeners.values.forEach { it.remove() }
+        mediaListeners.clear()
         isSyncing = false
+    }
+
+    private fun reconcileMediaListeners(activePartyIds: Set<String>) {
+        val stalePartyIds = mediaListeners.keys - activePartyIds
+        stalePartyIds.forEach { stopMediaListener(it) }
+        activePartyIds.forEach { partyId ->
+            if (partyId !in mediaListeners) {
+                startMediaListener(partyId)
+            }
+        }
+    }
+
+    private fun startMediaListener(partyId: String) {
+        mediaListeners[partyId] = firestore.collection("parties")
+            .document(partyId)
+            .collection("media")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e(TAG, "Media listener error for $partyId: ${error.message}", error)
+                    return@addSnapshotListener
+                }
+                if (snapshot == null) return@addSnapshotListener
+
+                repositoryScope.launch {
+                    try {
+                        val toInsert = mutableListOf<MediaEntity>()
+                        for (change in snapshot.documentChanges) {
+                            val doc = change.document
+                            val mediaId = doc.id
+                            when (change.type) {
+                                DocumentChange.Type.REMOVED -> {
+                                    mediaDao.getMediaForPartyOnce(partyId)
+                                        .firstOrNull { it.id == mediaId }
+                                        ?.let { existing ->
+                                            val file = java.io.File(existing.encryptedFilePath)
+                                            if (file.exists()) {
+                                                file.delete()
+                                            }
+                                        }
+                                    mediaDao.deleteById(mediaId)
+                                }
+                                else -> {
+                                    val createdAt = doc.getTimestamp("createdAt")?.let {
+                                        Instant.fromEpochMilliseconds(it.toDate().time)
+                                    } ?: Clock.System.now()
+                                    val flagged = doc.getBoolean("flagged") ?: false
+                                    toInsert.add(
+                                        MediaEntity(
+                                            id = mediaId,
+                                            partyId = partyId,
+                                            encryptedFilePath = MediaFilePaths.encryptedFile(
+                                                context.filesDir,
+                                                partyId,
+                                                mediaId
+                                            ).absolutePath,
+                                            createdAt = createdAt,
+                                            flagged = flagged
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        if (toInsert.isNotEmpty()) {
+                            mediaDao.insertAll(toInsert)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error processing media snapshot for $partyId", e)
+                    }
+                }
+            }
+    }
+
+    private fun stopMediaListener(partyId: String) {
+        mediaListeners.remove(partyId)?.remove()
+    }
+
+    private suspend fun ensureSharedMediaKey(
+        partyId: String,
+        hostUserId: String,
+        existingKey: String?
+    ) {
+        if (!existingKey.isNullOrBlank()) {
+            runCatching { partyKeyStore.importEncodedKey(partyId, existingKey) }
+                .onFailure { Log.e(TAG, "Invalid media key for party $partyId") }
+            return
+        }
+
+        val currentUserId = auth.currentUser?.uid ?: return
+        if (currentUserId != hostUserId) {
+            return
+        }
+
+        val generated = PartyKeyCodec.generate()
+        val encoded = PartyKeyCodec.encode(generated)
+        val partyRef = firestore.collection("parties").document(partyId)
+        try {
+            val stored = firestore.runTransaction { transaction ->
+                val snapshot = transaction.get(partyRef)
+                val current = snapshot.getString("mediaKey")
+                if (current.isNullOrBlank()) {
+                    transaction.update(partyRef, "mediaKey", encoded)
+                    encoded
+                } else {
+                    current
+                }
+            }.await()
+            partyKeyStore.importEncodedKey(partyId, stored)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to persist shared media key for $partyId", e)
+        } finally {
+            generated.fill(0)
+        }
+    }
+
+    private suspend fun importMediaKeyFromParty(partyId: String) {
+        val partyDoc = firestore.collection("parties").document(partyId).get().await()
+        val mediaKey = partyDoc.getString("mediaKey")
+        val hostUserId = partyDoc.getString("hostUserId") ?: ""
+        ensureSharedMediaKey(partyId, hostUserId, mediaKey)
     }
 
     override suspend fun createParty(name: String, expiresAt: Instant): Result<PartyEntity> {
@@ -173,11 +311,9 @@ class FirebasePartyRepository @Inject constructor(
                         isDeleted = false
                     )
 
-                    // Save to Room cache
                     partyDao.insert(partyEntity)
-
-                    // Schedule local expiration
                     expirationScheduler.scheduleExpiration(id, expiresAtParsed)
+                    importMediaKeyFromParty(id)
 
                     Result.success(partyEntity)
                 },
@@ -215,11 +351,9 @@ class FirebasePartyRepository @Inject constructor(
                         isDeleted = false
                     )
 
-                    // Save to Room cache
                     partyDao.insert(partyEntity)
-
-                    // Schedule local expiration
                     expirationScheduler.scheduleExpiration(id, expiresAtParsed)
+                    importMediaKeyFromParty(id)
 
                     Result.success(partyEntity)
                 },
@@ -238,14 +372,13 @@ class FirebasePartyRepository @Inject constructor(
 
     override suspend fun deleteParty(partyId: String): Result<Unit> {
         return try {
-            // Soft delete locally first
             partyDao.softDelete(partyId)
             expirationScheduler.cancelExpiration(partyId)
+            stopMediaListener(partyId)
+            partyKeyStore.deleteKey(partyId)
 
-            // Leave/Delete on backend via function
             partyService.leaveParty(partyId)
             
-            // If current user is host, mark inactive in Firestore
             val currentUserId = auth.currentUser?.uid
             if (currentUserId != null) {
                 val partyDoc = firestore.collection("parties").document(partyId).get().await()

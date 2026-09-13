@@ -1,14 +1,15 @@
 package com.afterlight.data.local.di
 
 import android.content.Context
+import android.util.Log
 import androidx.room.Room
-import androidx.sqlite.db.SupportSQLiteDatabase
 import com.afterlight.data.local.AfterLightDatabase
 import com.afterlight.data.local.dao.FaceDao
 import com.afterlight.data.local.dao.MediaDao
 import com.afterlight.data.local.dao.PartyDao
 import com.afterlight.data.local.dao.SyncStateDao
 import com.afterlight.data.local.dao.UserDao
+import com.afterlight.data.local.security.SqlCipherPassphraseStore
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -20,23 +21,24 @@ import javax.inject.Singleton
 
 /**
  * Hilt module for data-local dependency injection.
- * Stage 13: SQLCipher encrypted database, singleton DAOs.
+ * SQLCipher passphrase is generated per install and stored in EncryptedSharedPreferences.
  */
 @Module
 @InstallIn(SingletonComponent::class)
 object DatabaseModule {
+
+    private const val TAG = "DatabaseModule"
     
-    /**
-     * Provides singleton AfterLightDatabase with SQLCipher encryption.
-     * Passphrase should be retrieved from secure storage in production.
-     */
     @Provides
     @Singleton
     fun provideDatabase(
         @ApplicationContext context: Context
     ): AfterLightDatabase {
-        // TODO: Retrieve passphrase from Android Keystore in production
-        val passphrase = "afterlight_encryption_key_2024".toByteArray()
+        val passphraseStore = SqlCipherPassphraseStore(context)
+        val passphrase = passphraseStore.getOrCreatePassphrase()
+        migrateLegacyPassphraseIfNeeded(context, passphrase, passphraseStore.legacyPassphrase())
+        passphraseStore.legacyPassphrase().fill(0)
+
         val factory = SupportOpenHelperFactory(passphrase)
         
         return Room.databaseBuilder(
@@ -45,8 +47,57 @@ object DatabaseModule {
             AfterLightDatabase.DATABASE_NAME
         )
             .openHelperFactory(factory)
-            .fallbackToDestructiveMigration() // MVP: Allow data loss on schema changes
+            .fallbackToDestructiveMigration()
             .build()
+    }
+
+    /**
+     * One-time migration from the previous hardcoded passphrase to the stored random key.
+     * If neither passphrase opens the existing file, the old database is removed.
+     */
+    private fun migrateLegacyPassphraseIfNeeded(
+        context: Context,
+        newPassphrase: ByteArray,
+        legacyPassphrase: ByteArray
+    ) {
+        val dbFile = context.getDatabasePath(AfterLightDatabase.DATABASE_NAME)
+        if (!dbFile.exists()) {
+            return
+        }
+
+        if (canOpen(dbFile.absolutePath, newPassphrase)) {
+            return
+        }
+
+        if (canOpen(dbFile.absolutePath, legacyPassphrase)) {
+            try {
+                val database = SQLiteDatabase.openOrCreateDatabase(
+                    dbFile.absolutePath,
+                    legacyPassphrase,
+                    null,
+                    null
+                )
+                database.changePassword(newPassphrase)
+                database.close()
+                Log.i(TAG, "Rekeyed SQLCipher database to install-specific passphrase")
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to rekey legacy SQLCipher database", e)
+            }
+        }
+
+        Log.w(TAG, "Unable to open existing SQLCipher database; recreating")
+        context.deleteDatabase(AfterLightDatabase.DATABASE_NAME)
+    }
+
+    private fun canOpen(path: String, passphrase: ByteArray): Boolean {
+        return try {
+            val database = SQLiteDatabase.openOrCreateDatabase(path, passphrase, null, null)
+            database.close()
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
     
     @Provides

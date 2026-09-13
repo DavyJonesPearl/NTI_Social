@@ -8,6 +8,7 @@ import {onSchedule} from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import * as admin from "firebase-admin";
 import {setGlobalOptions} from "firebase-functions/v2";
+import * as crypto from "crypto";
 
 admin.initializeApp();
 
@@ -37,6 +38,7 @@ export const createParty = onCall(async (request) => {
 
   try {
     const expiresDate = new Date(expiresAt);
+    const mediaKey = crypto.randomBytes(32).toString("base64");
     const partyRef = await db.collection("parties").add({
       name: name,
       hostUserId: userId,
@@ -44,6 +46,7 @@ export const createParty = onCall(async (request) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       expiresAt: expiresDate,
       isActive: true,
+      mediaKey: mediaKey,
     });
 
     logger.info(`Party created: ${partyRef.id} by user ${userId}`);

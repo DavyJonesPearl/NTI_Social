@@ -10,12 +10,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.datetime.Clock
-import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Party detail screen with camera/gallery actions.
- * Stage 13: Party info, take photo, view gallery, delete confirmation.
  */
 @Composable
 fun PartyDetailScreen(
@@ -25,17 +24,31 @@ fun PartyDetailScreen(
     onNavigateToGallery: (String) -> Unit,
     viewModel: PartyViewModel = hiltViewModel()
 ) {
-    val partyRepository = viewModel // Access via DI if needed
-    var party by remember { mutableStateOf<com.afterlight.data.local.model.PartyEntity?>(null) }
+    val party by viewModel.selectedParty.collectAsState()
     var showDeleteDialog by remember { mutableStateOf(false) }
     var timeRemaining by remember { mutableStateOf("") }
     
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-    
+
     LaunchedEffect(partyId) {
-        // Note: Would fetch party from repository here
-        // For now, simplified
+        viewModel.loadParty(partyId)
+    }
+
+    LaunchedEffect(party?.expiresAt) {
+        val expiresAt = party?.expiresAt ?: return@LaunchedEffect
+        while (true) {
+            val remainingSeconds = (expiresAt - Clock.System.now()).inWholeSeconds
+            timeRemaining = if (remainingSeconds <= 0) {
+                "Expired"
+            } else {
+                val hours = remainingSeconds / 3600
+                val minutes = (remainingSeconds % 3600) / 60
+                val seconds = remainingSeconds % 60
+                "%02d:%02d:%02d".format(hours, minutes, seconds)
+            }
+            delay(1_000)
+        }
     }
     
     LaunchedEffect(uiState) {
@@ -99,14 +112,16 @@ fun PartyDetailScreen(
             
             Button(
                 onClick = { onNavigateToCamera(partyId) },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                enabled = party != null && timeRemaining != "Expired"
             ) {
                 Text("Take Photo")
             }
             
             OutlinedButton(
                 onClick = { onNavigateToGallery(partyId) },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                enabled = party != null
             ) {
                 Text("View Gallery")
             }

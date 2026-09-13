@@ -50,6 +50,7 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     
     // Security & Encryption
+    implementation(libs.androidx.security.crypto)
     implementation(libs.tink.android)
     
     // Coroutines
